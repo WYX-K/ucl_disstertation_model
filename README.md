@@ -6,6 +6,10 @@ In this model, Long Short-Term Memory (LSTM) networks are employed for feature e
 
 The time-related features are categorized into temporal and spatial components. To optimally fit both aspects, this model utilizes the product method, ensuring that both the temporal and spatial features are preserved to the greatest extent possible.
 
+## Flow Chart
+
+![](https://raw.githubusercontent.com/WYX-K/pic_bed/main/img/202403241456453.png)
+
 ## Results
 
 ### Data Preprocessing

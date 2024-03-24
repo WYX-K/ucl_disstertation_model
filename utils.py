@@ -16,7 +16,7 @@ def data_preprocessing(file_name):
     data['StartTime'] = pd.to_datetime(
         data['StartTime'], format='%d/%m/%Y %H:%M')
     data['EndTime'] = pd.to_datetime(data['EndTime'], format='%d/%m/%Y %H:%M')
-    data['Pathway'] = (data['Pathway'] != 'Walkin').astype('category')
+    data['Pathway'] = (data['Pathway'] != 'Walkin').astype('int')
     max_sequence = max(data.groupby('SpellID_Anon').size())
     area_time_sequence_head = [item for sublist in [
         [x, 'Time'+str(x)] for x in range(1, max_sequence + 1)] for item in sublist]

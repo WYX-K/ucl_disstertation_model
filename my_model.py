@@ -108,7 +108,7 @@ class MyModel:
         padded_time_sequences = pad_sequence([torch.FloatTensor(
             seq) for seq in self.time_sequences], batch_first=True, padding_value=0)
         labels = torch.FloatTensor(self.labels)
-        other_variables = torch.tensor(self.other_variable)
+        other_variables = torch.FloatTensor(self.other_variable)
         ratio = 0.8
         train_idx = int(len(padded_region_sequences) * ratio)
         test_idx = int(len(padded_region_sequences) * ratio)
