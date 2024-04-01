@@ -12,28 +12,6 @@ The time-related features are categorized into temporal and spatial components. 
 
 ## Results
 
-### Data Preprocessing
-
-![](https://raw.githubusercontent.com/WYX-K/pic_bed/main/img/202403240058645.png)
-
-see `patients.csv` file
-
-### LSTM + XGBM
-
-![image-20240324010220549](https://raw.githubusercontent.com/WYX-K/pic_bed/main/img/202403240102582.png)
-
-### LSTM + LightGBM
-
-![image-20240324010250082](https://raw.githubusercontent.com/WYX-K/pic_bed/main/img/202403240102119.png)
-
-### LSTM + Random Forest
-
-![image-20240324010347077](https://raw.githubusercontent.com/WYX-K/pic_bed/main/img/202403240103107.png)
-
-### LSTM
-
-![image-20240324010113629](https://raw.githubusercontent.com/WYX-K/pic_bed/main/img/202403240101668.png)
-
 ## Platform
 
 - Windows 11

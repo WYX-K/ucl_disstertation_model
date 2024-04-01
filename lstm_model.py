@@ -1,9 +1,13 @@
+import math
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 # Define the LSTM model
+
+
 class LSTM(nn.Module):
-    def __init__(self, vocab_size, region_embedding_dim, time_embedding_dim, hidden_size, output_size):
+    def __init__(self, vocab_size, region_embedding_dim, time_embedding_dim, hidden_size, output_size, num_layers=1, bidirectional=False):
         super(LSTM, self).__init__()
         # Embedding layer for region sequences
         self.region_embedding = nn.Embedding(
@@ -13,11 +17,9 @@ class LSTM(nn.Module):
             vocab_size, time_embedding_dim, padding_idx=0)
         # LSTM layer
         self.lstm = nn.LSTM(region_embedding_dim +
-                            time_embedding_dim, hidden_size, batch_first=True)
+                            time_embedding_dim, hidden_size, batch_first=True, num_layers=num_layers, bidirectional=bidirectional)
         # Fully connected layer
         self.fc = nn.Linear(hidden_size, output_size)
-        # Sigmoid activation function
-        self.sigmoid = nn.Sigmoid()
 
     # Forward pass
     def forward(self, region_sequences, time_sequences):
@@ -30,8 +32,5 @@ class LSTM(nn.Module):
         combined_embed = torch.cat([region_embed, time_embed], dim=-1)
         # Pass through LSTM
         _, (hidden, _) = self.lstm(combined_embed)
-        # Pass through fully connected layer
-        out = self.fc(hidden.squeeze(0))
-        # Apply sigmoid activation function
-        out = self.sigmoid(out)
+        out = self.fc(hidden[-1])
         return out

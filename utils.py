@@ -3,6 +3,8 @@ from sklearn.metrics import auc, roc_curve
 import pandas as pd
 import numpy as np
 import pickle
+from sklearn.calibration import label_binarize
+from sklearn.model_selection import train_test_split
 
 
 def data_preprocessing(file_name):
@@ -12,6 +14,7 @@ def data_preprocessing(file_name):
     ----------
     file_name: the name of the file containing the data
     """
+    # Load the data
     data = pd.read_csv(file_name)
     data['StartTime'] = pd.to_datetime(
         data['StartTime'], format='%d/%m/%Y %H:%M')
@@ -53,8 +56,12 @@ def data_preprocessing(file_name):
         for i in range(0, len(col_list)):
             currentArea = patient['CurrentArea'][i]
             TotalMins = patient['TotalMins'][i]
-            row[col_list[i]] = area_list.index(currentArea)
-            row['Time'+str(col_list[i])] = TotalMins
+            if TotalMins == 0:
+                row[col_list[i]] = 0
+                row['Time'+str(col_list[i])] = 0
+            else:
+                row[col_list[i]] = area_list.index(currentArea)
+                row['Time'+str(col_list[i])] = TotalMins
         return row
 
     patients = patients.apply(add_row, axis=1)
@@ -96,6 +103,65 @@ def data_preprocessing(file_name):
     return patients
 
 
+def process_data(df):
+    """the detail of split the data
+
+    Parameters
+    ----------
+    df: the data to be split
+
+    returns
+    -------
+    splited: the splited data
+    """
+    splited = pd.DataFrame(columns=df.columns)
+
+    def split_data(row):
+        np_area = row.values[2:-1]
+        mask = np_area == 0
+        first_zero = np.where(mask)[0][0]
+        new_row = np_area[:first_zero]
+        splited.loc[len(splited)] = row
+        for i in range(0, int(first_zero/2-1)):
+            new_row = new_row[:-2]
+            new_concat_row = np.concatenate([row.values[:2], new_row])
+            # pad with zeros to length of patients.columns - 1
+            new_concat_row = np.pad(
+                new_concat_row, (0, df.columns.shape[0] - new_concat_row.shape[0] - 1), 'constant')
+            new_concat_row = np.concatenate([new_concat_row, [2]])
+            new_concat_row = pd.Series(new_concat_row, index=df.columns)
+            # add new row to test_splited
+            splited.loc[len(splited)] = new_concat_row
+
+    df.apply(split_data, axis=1)
+    return splited
+
+
+def split_data(data, test_size=0.2):
+    """ Split the data into training and testing sets
+
+    Parameters
+    ----------
+    data: the data to be split
+    test_size: the size of the testing set
+
+    returns
+    -------
+    X_train, X_test, y_train, y_test: the training and testing sets
+    """
+    train, test = train_test_split(data, test_size=test_size, random_state=0)
+
+    train_splited = process_data(train)
+    test_splited = process_data(test)
+
+    X_train, X_test = train_splited.iloc[:, :-
+                                         1].values, test_splited.iloc[:, :-1].values
+    y_train, y_test = train_splited.iloc[:, -
+                                         1].values, test_splited.iloc[:, -1].values
+
+    return X_train, X_test, y_train, y_test
+
+
 def evaluate_roc_model(predict_proba, labels):
     """Evaluate the model using ROC curve
 
@@ -111,12 +177,21 @@ def evaluate_roc_model(predict_proba, labels):
     tpr: true positive rate
     threshold: the threshold used to calculate the ROC curve
     """
-    fpr, tpr, threshold = roc_curve(labels, predict_proba)
-    roc_auc = auc(fpr, tpr)
-    return roc_auc, fpr, tpr, threshold
+    labels = label_binarize(labels, classes=[0, 1, 2])
+    n_classes = labels.shape[1]
+    fpr = dict()
+    tpr = dict()
+    roc_auc = dict()
+    for i in range(n_classes):
+        fpr[i], tpr[i], _ = roc_curve(labels[:, i], predict_proba[:, i])
+        roc_auc[i] = auc(fpr[i], tpr[i])
+        fpr["micro"], tpr["micro"], _ = roc_curve(
+            labels.ravel(), predict_proba.ravel())
+        roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
+    return roc_auc, fpr, tpr
 
 
-def draw_roc_curve(predict_proba, labels):
+def draw_roc_curve(predict_proba, labels, name):
     """Draw ROC curve for the model
 
     Parameters
@@ -124,17 +199,22 @@ def draw_roc_curve(predict_proba, labels):
     predict_proba: the predicted probabilities of the positive class
     labels: the labels
     """
-    roc_auc, fpr, tpr, threshold = evaluate_roc_model(
+    roc_auc, fpr, tpr = evaluate_roc_model(
         predict_proba, labels)
     plt.figure()
-    lw = 2
-    plt.plot(fpr, tpr, color='darkorange',
-             lw=lw, label='ROC curve (area = %0.2f)' % roc_auc)
-    plt.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
+    plt.plot(fpr["micro"], tpr["micro"],
+             label='micro-average ROC curve (area = {0:0.2f})'
+             ''.format(roc_auc["micro"]))
+    for i in range(predict_proba.shape[1]):
+        plt.plot(fpr[i], tpr[i], label='ROC curve of class {0} (area = {1:0.2f})'
+                 ''.format(i, roc_auc[i]))
+
+    plt.plot([0, 1], [0, 1], 'k--')
     plt.xlim([0.0, 1.0])
     plt.ylim([0.0, 1.05])
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')
-    plt.title('Receiver Operating Characteristic')
+    plt.title(
+        f'Some extension of Receiver operating characteristic to multi-class ({name})')
     plt.legend(loc="lower right")
     plt.show()
