@@ -2,7 +2,6 @@ from matplotlib import pyplot as plt
 from sklearn.metrics import auc, roc_curve
 import pandas as pd
 import numpy as np
-import pickle
 from sklearn.calibration import label_binarize
 from sklearn.model_selection import train_test_split
 
@@ -15,7 +14,8 @@ def data_preprocessing(file_name):
     file_name: the name of the file containing the data
     """
     # Load the data
-    data = pd.read_csv(file_name)
+    data = pd.read_csv(file_name, low_memory=False)
+    data = data.dropna()
     data['StartTime'] = pd.to_datetime(
         data['StartTime'], format='%d/%m/%Y %H:%M')
     data['EndTime'] = pd.to_datetime(data['EndTime'], format='%d/%m/%Y %H:%M')
@@ -42,10 +42,8 @@ def data_preprocessing(file_name):
     patients['isAdmitted'] = patients['SpellID_Anon'].isin(
         patient_admitted_list['SpellID_Anon']).astype(int)
 
-    # encode the area sequence
-    with open('dict_area.pkl', 'rb') as f:
-        dict_area = pickle.load(f)
-    area_list = list(dict_area.keys())
+    dict_area = pd.Series(data['CurrentArea'].unique()).to_dict()
+    area_list = list(dict_area.values())
     data_grouped = data.groupby('SpellID_Anon')[
         ['AreaSequence', 'CurrentArea', 'TotalMins']].agg(list)
     data_dict = data_grouped.to_dict('index')
@@ -58,10 +56,10 @@ def data_preprocessing(file_name):
             TotalMins = patient['TotalMins'][i]
             if TotalMins == 0:
                 row[col_list[i]] = 0
-                row['Time'+str(col_list[i])] = 0
+                row['Time'+str(int(col_list[i]))] = 0
             else:
                 row[col_list[i]] = area_list.index(currentArea)
-                row['Time'+str(col_list[i])] = TotalMins
+                row['Time'+str(int(col_list[i]))] = TotalMins
         return row
 
     patients = patients.apply(add_row, axis=1)
@@ -75,6 +73,7 @@ def data_preprocessing(file_name):
     and the OTF event is then removed from the sequence.
     The region and time sequences are then extended with zeros to match the original length.
     """
+
     def delete_OTF(row):
         # Extract the region and time arrays from the row
         region_arr, time_arr = row[region_cols].values, row[time_cols].values
@@ -83,12 +82,25 @@ def data_preprocessing(file_name):
         # Find the positions where the mask is True (i.e., where the region array is 0)
         zero_positions = np.where(mask)[0]
         # Add the time at the zero positions to the time at the previous positions
-        time_arr[zero_positions-1] += time_arr[zero_positions]
-        # Create new region and time arrays that exclude the zero positions
+        for zero_position in zero_positions:
+            if zero_position > 0:
+                time_arr[zero_position-1] += time_arr[zero_position]
+            else:
+                time_arr[zero_position+1] += time_arr[zero_position]
         region_arr_new, time_arr_new = region_arr[~mask], time_arr[~mask]
+        for i in range(0, len(region_arr_new)):
+            if i < len(region_arr_new):
+                if region_arr_new[i] == region_arr_new[i-1]:
+                    time_arr_new[i-1] += time_arr_new[i]
+                    region_arr_new = np.delete(region_arr_new, i)
+                    time_arr_new = np.delete(time_arr_new, i)
+                    i -= 1
+            else:
+                break
         # Extend the new region and time arrays with zeros to match the original length
-        region_arr_new, time_arr_new = np.concatenate([region_arr_new, np.zeros(len(
-            zero_positions))]), np.concatenate([time_arr_new, np.zeros(len(zero_positions))])
+        region_arr_new, time_arr_new = np.pad(region_arr_new, (0, len(region_arr) - len(
+            region_arr_new)), 'constant'), np.pad(time_arr_new, (0, len(time_arr) - len(
+                time_arr_new)), 'constant')
         # Replace the original region and time arrays in the row with the new arrays
         row[region_cols], row[time_cols] = region_arr_new, time_arr_new
         return row
@@ -98,8 +110,10 @@ def data_preprocessing(file_name):
     patients[region_cols+['isAdmitted']
              ] = patients[region_cols+['isAdmitted']].astype(int)
     patients[time_cols] = patients[time_cols].astype(float)
+    patients = patients[patients[1] != 0]
     patients = patients.iloc[:, 1:]
     patients.drop_duplicates(keep='first', inplace=True)
+    # patients.to_csv('patients_with_id.csv', index=False)
     return patients
 
 

@@ -2,7 +2,8 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from torch.utils.data import Dataset
+from torch.nn.utils.rnn import pack_padded_sequence
 # Define the LSTM model
 
 
@@ -22,7 +23,7 @@ class LSTM(nn.Module):
         self.fc = nn.Linear(hidden_size, output_size)
 
     # Forward pass
-    def forward(self, region_sequences, time_sequences):
+    def forward(self, region_sequences, time_sequences, original_length):
         # Get embeddings for region sequences
         region_embed = self.region_embedding(region_sequences)
         # Get embeddings for time sequences and multiply by time sequences
@@ -30,7 +31,25 @@ class LSTM(nn.Module):
             region_sequences) * time_sequences.unsqueeze(-1)
         # Concatenate region and time embeddings
         combined_embed = torch.cat([region_embed, time_embed], dim=-1)
+        combined_embed_packed = pack_padded_sequence(combined_embed, original_length, batch_first=True, enforce_sorted=False)
         # Pass through LSTM
-        _, (hidden, _) = self.lstm(combined_embed)
+        _, (hidden, _) = self.lstm(combined_embed_packed)
         out = self.fc(hidden[-1])
         return out
+
+class MyDataset(Dataset):
+    def __init__(self, X, y):
+        self.region_sequences = X[:,2::2]
+        self.time_sequences = X[:,3::2]
+        self.other_features = X[:,:2]
+        self.y = y
+
+    def __getitem__(self, index):
+        region_sequences = self.region_sequences[index]
+        time_sequences = self.time_sequences[index]
+        other_features = self.other_features[index]
+        y = self.y[index]
+        return region_sequences, time_sequences, other_features, y
+
+    def __len__(self):
+        return len(self.region_sequences)
