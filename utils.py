@@ -6,7 +6,7 @@ from sklearn.calibration import label_binarize
 from sklearn.model_selection import train_test_split
 
 
-def data_preprocessing(file_name):
+def data_preprocessing(file_name, with_id=False, first_time_preprocess=True):
     """Preprocess the data
 
     Parameters
@@ -31,8 +31,9 @@ def data_preprocessing(file_name):
     # encode the first time to ED
     patients[['SpellID_Anon', 'Pathway', 'FirstTimetoED']
              ] = data[data['AreaSequence'] == 1][['SpellID_Anon', 'Pathway', 'StartTime']]
-    patients['FirstTimetoED'] = patients['FirstTimetoED'].apply(
-        lambda x: x.hour+x.minute/60)
+    if first_time_preprocess:
+        patients['FirstTimetoED'] = patients['FirstTimetoED'].apply(
+            lambda x: x.hour+x.minute/60)
 
     # encode the admitted status
     transfer_status_list = pd.Series(data['TransferStatus'].unique())
@@ -68,7 +69,7 @@ def data_preprocessing(file_name):
 
     """
     This code is designed to handle rows in a DataFrame where a region sequence (represented by `region_arr`) has a value of 0,
-    which is considered an "off-the-floor" (OTF) event.
+    which is considered an "of-the-floor" (OTF) event.
     The time spent in these OTF events is added to the time spent in the previous region,
     and the OTF event is then removed from the sequence.
     The region and time sequences are then extended with zeros to match the original length.
@@ -111,13 +112,14 @@ def data_preprocessing(file_name):
              ] = patients[region_cols+['isAdmitted']].astype(int)
     patients[time_cols] = patients[time_cols].astype(float)
     patients = patients[patients[1] != 0]
-    patients = patients.iloc[:, 1:]
+    if not with_id:
+        patients = patients.iloc[:, 1:]
     patients.drop_duplicates(keep='first', inplace=True)
     # patients.to_csv('patients_with_id.csv', index=False)
     return patients
 
 
-def process_data(df):
+def process_data(df, two_classes):
     """the detail of split the data
 
     Parameters
@@ -136,13 +138,18 @@ def process_data(df):
         first_zero = np.where(mask)[0][0]
         new_row = np_area[:first_zero]
         splited.loc[len(splited)] = row
+        final_status = row.values[-1]
         for i in range(0, int(first_zero/2-1)):
             new_row = new_row[:-2]
             new_concat_row = np.concatenate([row.values[:2], new_row])
             # pad with zeros to length of patients.columns - 1
             new_concat_row = np.pad(
                 new_concat_row, (0, df.columns.shape[0] - new_concat_row.shape[0] - 1), 'constant')
-            new_concat_row = np.concatenate([new_concat_row, [2]])
+            if two_classes:
+                new_concat_row = np.concatenate(
+                    [new_concat_row, [final_status]])
+            else:
+                new_concat_row = np.concatenate([new_concat_row, [2]])
             new_concat_row = pd.Series(new_concat_row, index=df.columns)
             # add new row to test_splited
             splited.loc[len(splited)] = new_concat_row
@@ -151,7 +158,7 @@ def process_data(df):
     return splited
 
 
-def split_data(data, test_size=0.2):
+def split_data(data, test_size=0.2, two_classes=False):
     """ Split the data into training and testing sets
 
     Parameters
@@ -164,14 +171,10 @@ def split_data(data, test_size=0.2):
     X_train, X_test, y_train, y_test: the training and testing sets
     """
     train, test = train_test_split(data, test_size=test_size, random_state=0)
-
-    train_splited = process_data(train)
-    test_splited = process_data(test)
-
-    X_train, X_test = train_splited.iloc[:, :-
-                                         1].values, test_splited.iloc[:, :-1].values
-    y_train, y_test = train_splited.iloc[:, -
-                                         1].values, test_splited.iloc[:, -1].values
+    train = process_data(train, two_classes)
+    test = process_data(test, two_classes)
+    X_train, X_test = train.iloc[:, :-1].values, test.iloc[:, :-1].values
+    y_train, y_test = train.iloc[:, -1].values, test.iloc[:, -1].values
 
     return X_train, X_test, y_train, y_test
 
@@ -213,22 +216,33 @@ def draw_roc_curve(predict_proba, labels, name):
     predict_proba: the predicted probabilities of the positive class
     labels: the labels
     """
-    roc_auc, fpr, tpr = evaluate_roc_model(
-        predict_proba, labels)
-    plt.figure()
-    plt.plot(fpr["micro"], tpr["micro"],
-             label='micro-average ROC curve (area = {0:0.2f})'
-             ''.format(roc_auc["micro"]))
-    for i in range(predict_proba.shape[1]):
-        plt.plot(fpr[i], tpr[i], label='ROC curve of class {0} (area = {1:0.2f})'
-                 ''.format(i, roc_auc[i]))
 
+    plt.figure()
+    if predict_proba.shape[1] == 1:
+        fpr, tpr, thresholds = roc_curve(labels, predict_proba)
+        roc_auc = auc(fpr, tpr)
+        plt.plot(fpr, tpr, color='darkorange', lw=2,
+                 label='ROC curve (area = %0.2f)' % roc_auc)
+    elif predict_proba.shape[1] == 2:
+        fpr, tpr, thresholds = roc_curve(labels, predict_proba[:, 1])
+        roc_auc = auc(fpr, tpr)
+        plt.plot(fpr, tpr, color='darkorange', lw=2,
+                 label='ROC curve (area = %0.2f)' % roc_auc)
+    else:
+        roc_auc, fpr, tpr = evaluate_roc_model(
+            predict_proba, labels)
+        plt.plot(fpr["micro"], tpr["micro"],
+                 label='micro-average ROC curve (area = {0:0.2f})'
+                 ''.format(roc_auc["micro"]))
+        for i in range(predict_proba.shape[1]):
+            plt.plot(fpr[i], tpr[i], label='ROC curve of class {0} (area = {1:0.2f})'
+                     ''.format(i, roc_auc[i]))
     plt.plot([0, 1], [0, 1], 'k--')
     plt.xlim([0.0, 1.0])
     plt.ylim([0.0, 1.05])
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')
     plt.title(
-        f'Some extension of Receiver operating characteristic to multi-class ({name})')
+        f'Some extension of Receiver operating characteristic to {"Binary" if predict_proba.shape[1] == 2 else "Multi"} class ({name})')
     plt.legend(loc="lower right")
     plt.show()

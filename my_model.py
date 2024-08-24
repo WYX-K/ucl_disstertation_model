@@ -21,11 +21,12 @@ class MyModel:
     params: The parameters for training
     """
 
-    def __init__(self, extractor, classifier, params):
+    def __init__(self, extractor=None, params=None, classifier=None, n_class=3):
 
         self.extractor = extractor
         self.classifier = classifier
         self.params = params
+        self.n_class = n_class
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     def train(self, X_train, y_train, show_loss=False):
@@ -47,10 +48,12 @@ class MyModel:
             X_train, y_train)
         # Train the feature extractor
         extractor = self.__train_extractor(train_data_loader, show_loss)
+        if self.classifier is None:
+            return extractor
         classifier = self.__train_classifier(extractor, train_data_loader)
         return extractor, classifier
 
-    def evaluate(self, extractor, classifier, X_test, y_test):
+    def evaluate(self, extractor, X_test, y_test, classifier=None):
         """Evaluate the model and return the predicted probabilities.
 
         Parameters
@@ -70,7 +73,8 @@ class MyModel:
         # Use the trained classifier to predict the probabilities of the positive class
         # predict_proba = classifier.predict_proba(
         #     extracted_features_test)
-        predict_proba_with_labels = self.__evaluate_model(extractor, classifier, test_data_loader)
+        predict_proba_with_labels = self.__evaluate_model(
+            extractor, classifier, test_data_loader)
         labels = predict_proba_with_labels[:, -1].reshape(-1, 1)
         predict_proba = predict_proba_with_labels[:, :-1]
         return predict_proba, labels
@@ -89,7 +93,8 @@ class MyModel:
         labels: The predicted labels
         """
         data_loader = self.__preprocess_data(X, None)
-        predict_proba_with_labels = self.__evaluate_model(extractor, classifier, data_loader)
+        predict_proba_with_labels = self.__evaluate_model(
+            extractor, classifier, data_loader)
         labels = predict_proba_with_labels[:, -1].reshape(-1, 1)
         return labels
 
@@ -169,7 +174,10 @@ class MyModel:
         """
         device = self.device
         model = self.extractor.to(device)
-        criterion = nn.CrossEntropyLoss()
+        if self.n_class == 1:
+            criterion = nn.BCELoss()
+        else:
+            criterion = nn.CrossEntropyLoss()
         optimizer = optim.AdamW(model.parameters())
         model.train()
         if show_loss:
@@ -183,7 +191,11 @@ class MyModel:
                                     original_length)  # Forward pass
                     optimizer.zero_grad()
                     # Compute loss
-                    loss = criterion(outputs, labels_batch.squeeze())
+                    if self.n_class == 1:
+                        loss = criterion(outputs.squeeze(),
+                                         labels_batch.squeeze().float())
+                    else:
+                        loss = criterion(outputs, labels_batch.squeeze())
                     loss.backward()  # Backward pass
                     loss_list_step.append(loss.item())
                     optimizer.step()  # Update the weights
@@ -198,7 +210,11 @@ class MyModel:
                                     original_length)  # Forward pass
                     optimizer.zero_grad()
                     # Compute loss
-                    loss = criterion(outputs, labels_batch.squeeze())
+                    if self.n_class == 1:
+                        loss = criterion(outputs.squeeze(),
+                                         labels_batch.squeeze().float())
+                    else:
+                        loss = criterion(outputs, labels_batch.squeeze())
                     loss.backward()  # Backward pass
                     optimizer.step()  # Update the weights
         return model
@@ -241,7 +257,6 @@ class MyModel:
                 self.classifier.fit(extracted_features, labels_batch)
         return self.classifier
 
-
     def __evaluate_model(self, extractor, classifier, data_loader):
         """Evaluate the model and return the predicted probabilities with labels.
 
@@ -260,15 +275,33 @@ class MyModel:
         model.eval()
 
         def get_proba_and_label(region_batch, time_batch, labels_batch, other_features, original_length):
-            region_batch, time_batch = region_batch.to(device), time_batch.to(device)
-            region_embed = model.region_embedding(region_batch)  # Embed the region sequences
-            time_embed = model.time_embedding(region_batch) * time_batch.unsqueeze(-1)  # Embed the time sequences
-            combined_embed = torch.cat([region_embed, time_embed], dim=-1)  # Combine the embeddings
-            combined_embed_packed = pack_padded_sequence(combined_embed, original_length, batch_first=True, enforce_sorted=False)
-            _, (hidden, _) = model.lstm(combined_embed_packed)  # Pass the combined embeddings through the LSTM
-            extracted_features = hidden[-1].cpu().numpy()  # Get the features from the LSTM
-            extracted_features = np.concatenate([other_features, extracted_features], axis=1)  # Combine the other variables with the extracted features
-            proba = classifier.predict_proba(extracted_features)  # Get the prediction probabilities
+            region_batch, time_batch = region_batch.to(
+                device), time_batch.to(device)
+            region_embed = model.region_embedding(
+                region_batch)  # Embed the region sequences
+            time_embed = model.time_embedding(
+                # Embed the time sequences
+                region_batch) * time_batch.unsqueeze(-1)
+            # Combine the embeddings
+            combined_embed = torch.cat([region_embed, time_embed], dim=-1)
+            combined_embed_packed = pack_padded_sequence(
+                combined_embed, original_length, batch_first=True, enforce_sorted=False)
+            # Pass the combined embeddings through the LSTM
+            _, (hidden, _) = model.lstm(combined_embed_packed)
+            if classifier == None:
+                if self.n_class == 1:
+                    outputs = model.binary_classifier(hidden[-1])
+                    proba = outputs.cpu().numpy()
+                else:
+                    outputs = model.multi_classifier(hidden[-1])
+                    proba = outputs.cpu().numpy()
+            else:
+                extracted_features = hidden[-1].cpu().numpy()
+                # Combine the other variables with the extracted features
+                extracted_features = np.concatenate(
+                    [other_features, extracted_features], axis=1)
+                # Get the prediction probabilities
+                proba = classifier.predict_proba(extracted_features)
             labels = labels_batch.numpy().reshape(-1, 1)
             return np.concatenate([proba, labels], axis=1)
 
@@ -276,8 +309,6 @@ class MyModel:
             results = map(lambda data: get_proba_and_label(*data), data_loader)
             results = np.vstack(list(results))
         return results
-
-
 
     def __draw_loss(self, loss_list_step):
         """Draw the loss curve for the model.
